@@ -273,12 +273,10 @@ law_headers = [
     "Environment","SubscriptionID","ResourceGroup","ResourceName","Type","Location",
     "SKU","Retention(Days)","Public Network Access"
 ]
+
 appinsights_headers = [
     "Environment","SubscriptionID","ResourceGroup","ResourceName","Type","Location",
     "Application Type","Workspace(ResourceId)"
-]
-managed_identity_headers = [
-    "Environment","SubscriptionID","ResourceGroup","ResourceName","Type","Location"
 ]
 
 
@@ -1491,20 +1489,6 @@ def query_load_balancers_rest(subscription_id: str, rg_name: str) -> List[Dict[s
 
     return out
 
-def query_user_assigned_managed_identities(subscription_ids: List[str], rg_name: str) -> List[Dict[str, Any]]:
-    client = get_arg_client()
-    base = normalize_arg_query(r"""
-Resources
-| where type =~ 'microsoft.managedidentity/userassignedidentities'
-| project subscriptionId, resourceGroup, name, type, location
-""")
-    query = normalize_arg_query(add_rg_filter(base, rg_name))
-    req = QueryRequest(subscriptions=subscription_ids, query=query)
-    print("👉 User Assigned Managed Identity 조회 중...")
-    result = client.resources(req)
-    return [dict(row) for row in result.data]
-
-
 # =========================
 # 4. Helper Parsers
 # =========================
@@ -2485,16 +2469,6 @@ def build_lb_rows(env: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         })
     return rows
 
-def build_managed_identity_rows(env: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [{
-        "Environment": env,
-        "SubscriptionID": i.get("subscriptionId",""),
-        "ResourceGroup":  i.get("resourceGroup",""),
-        "ResourceName":   i.get("name",""),
-        "Type":           i.get("type",""),
-        "Location":       i.get("location",""),
-    } for i in items]
-
 
 # =========================
 # 6. Excel 저장 (시트별)
@@ -2620,8 +2594,6 @@ def main():
     all_law_rows: List[Dict[str, Any]] = []
     all_appinsights_rows: List[Dict[str, Any]] = []
 
-    all_managed_identity_rows: List[Dict[str, Any]] = []
-
     # =========================
     # 2) 타입 게이트(스캔 기반)
     # =========================
@@ -2665,8 +2637,6 @@ def main():
     T_LAW = ["microsoft.operationalinsights/workspaces"]
     T_APPINSIGHTS = ["microsoft.insights/components"]
 
-    T_MI = ["microsoft.managedidentity/userassignedidentities"]
-
     # =========================
     # 3) sheets: rows 있는 것만 만들기 + 타입 존재하는 것만 시트 생성
     # =========================
@@ -2687,7 +2657,7 @@ def main():
         "aml": False, "eh": False, "pg": False, "mysql": False, "redis": False,
         "cosmos_acct": False, "cosmos_pg": False, "docdb": False, "sqlmi": False,
         "vnet": False, "pe": False, "kv": False, "law": False, "appinsights": False,
-        "serverfarms": False, "websites": False, "logic_cons": False, "managed_identity": False
+        "serverfarms": False, "websites": False, "logic_cons": False
     }
 
     for env, sub_id in SUB_ENV_MAP.items():
@@ -2756,7 +2726,6 @@ def main():
             # DocInt/OpenAI는 같은 계열(COG)이라 따로 표기
             mark("docint", T_COG)
             mark("openai", T_COG)
-            mark("managed_identity", T_MI)
 
             # VM
             if scan_failed or should_run(types_in_rg, T_VM):
@@ -2965,13 +2934,6 @@ def main():
                 apps = query_application_insights([sub_id], rg_name)
                 if apps:
                     all_appinsights_rows.extend(build_appinsights_rows(env, apps))
-            
-            # Managed Identity (User Assigned)
-            if scan_failed or should_run(types_in_rg, T_MI):
-                mis = query_user_assigned_managed_identities([sub_id], rg_name)
-                if mis:
-                    all_managed_identity_rows.extend(build_managed_identity_rows(env, mis))
-
 
     # =========================
     # 5) Excel 저장: "실제 존재하는 타입" + "rows 있는 시트"만 생성
@@ -3080,9 +3042,6 @@ def main():
         add_sheet_if_rows(sheets, "Log Analytics", law_headers, all_law_rows)
     if present["appinsights"] or all_appinsights_rows:
         add_sheet_if_rows(sheets, "Application Insights", appinsights_headers, all_appinsights_rows)
-
-    if present.get("managed_identity") or all_managed_identity_rows:
-        add_sheet_if_rows(sheets, "Managed Identity", managed_identity_headers, all_managed_identity_rows)
 
     if not sheets:
         raise RuntimeError("추출된 리소스가 없습니다. (권한/구독ID/RG 입력값을 확인해주세요)")
